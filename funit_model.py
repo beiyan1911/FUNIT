@@ -33,16 +33,23 @@ class FUNITModel(nn.Module):
             s_xb = self.gen.enc_class_model(xb)
             xt = self.gen.decode(c_xa, s_xb)  # translation
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
-            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb)
-            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la)
-            _, xb_gan_feat = self.dis(xb, lb)
-            _, xa_gan_feat = self.dis(xa, la)
+            # 传入 class id （la or lb），作用是
+            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb) # d features, accuracy, gan_feat
+            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la) # d features, accuracy, gan_feat
+            _, xb_gan_feat = self.dis(xb, lb) # xb d features
+            _, xa_gan_feat = self.dis(xa, la) # xa d features
+            # xa 和 xr 计算非精确重构特征损失
             l_c_rec = recon_criterion(xr_gan_feat.mean(3).mean(2),
                                       xa_gan_feat.mean(3).mean(2))
+
+            # xb 和 xt 计算非精确重构特征损失
             l_m_rec = recon_criterion(xt_gan_feat.mean(3).mean(2),
                                       xb_gan_feat.mean(3).mean(2))
+            # xr 和 xa 计算精确重构损失
             l_x_rec = recon_criterion(xr, xa)
+            # 使生成器G 生成结果尽可能真实
             l_adv = 0.5 * (l_adv_t + l_adv_r)
+            # 使生成器G 的精确率尽可能更高
             acc = 0.5 * (gacc_t + gacc_r)
             l_total = (hp['gan_w'] * l_adv + hp['r_w'] * l_x_rec + hp[
                 'fm_w'] * (l_c_rec + l_m_rec))
@@ -50,12 +57,15 @@ class FUNITModel(nn.Module):
             return l_total, l_adv, l_x_rec, l_c_rec, l_m_rec, acc
         elif mode == 'dis_update':
             xb.requires_grad_()
+            # 使 真值 xb 更真
             l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb, lb)
             l_real = hp['gan_w'] * l_real_pre
             l_real.backward(retain_graph=True)
+            # 梯度惩罚
             l_reg_pre = self.dis.calc_grad2(resp_r, xb)
             l_reg = 10 * l_reg_pre
             l_reg.backward()
+            # 假值更假
             with torch.no_grad():
                 c_xa = self.gen.enc_content(xa)
                 s_xb = self.gen.enc_class_model(xb)
